@@ -1,110 +1,92 @@
+require('dotenv').config();  // Load environment variables from .env file
 
-
-// const express = require("express");
-// const app = express();
-// const bodyParser = require("body-parser");
-
-// // Enable body parsing to handle JSON data
-// app.use(bodyParser.json());
-
-// // In-memory storage for scheduled messages (we'll use an array for simplicity)
-// const scheduledMessages = [];
-
-// // Test route
-// app.get("/api/test", (req, res) => {
-//   res.json({ message: "API working fine ✅ on port 8000" });
-// });
-
-// // API route to store the data from frontend
-// app.post("/api/schedule-message", (req, res) => {
-//   const { number, messages, count, schedule } = req.body;
-
-//   if (!number || !messages || !count || !schedule) {
-//     return res.status(400).json({ error: "Missing required fields" });
-//   }
-
-//   // Log the incoming data
-//   console.log("Data received:", req.body);
-
-//   // Return success response
-//   res.json({ status: "success", message: "Data stored successfully" });
-// });
-
-
-// // Server listen on port 8000
-// const PORT = 8000;
-// app.listen(PORT, () => {
-//   console.log(`Server running at http://localhost:${PORT}`);
-// });
-
-
-
-const express = require("express");
-const puppeteer = require("puppeteer");
+const express = require('express');
+const puppeteer = require('puppeteer');
 
 const app = express();
-const PORT = 8000;
 
-// Enable body parsing for JSON data
+// Use environment variables for Puppeteer executable path and port
+const PORT = process.env.PORT || 8000;
+const PUPPETEER_EXECUTABLE_PATH = process.env.PUPPETEER_EXECUTABLE_PATH || '/usr/bin/chromium';  // Default path for Render
+
 app.use(express.json());
 
-// Route to directly send WhatsApp message
+// Test route to check if server is up
+app.get("/api/test", (req, res) => {
+  res.json({ message: "API working fine ✅" });
+});
+
+// Route to handle WhatsApp message sending
 app.post("/api/schedule-message", async (req, res) => {
   const { number, messages, count, schedule } = req.body;
 
-  // Validation of incoming data
+  // Validate required fields
   if (!number || !messages || !count || !schedule) {
     return res.status(400).json({ error: "Missing required fields" });
   }
 
+  // Validate schedule date
   const dateObj = new Date(schedule);
   if (isNaN(dateObj.getTime())) {
     return res.status(400).json({ error: "Invalid schedule date/time" });
   }
 
   try {
-    // Launch Puppeteer to control WhatsApp Web
-    const browser = await puppeteer.launch({ headless: false });
+    console.log("Launching Puppeteer...");
+    const browser = await puppeteer.launch({
+      headless: false, // Set to false to open a visible browser window
+      executablePath: PUPPETEER_EXECUTABLE_PATH,  // Use the path from the environment variable
+      args: ['--no-sandbox', '--disable-setuid-sandbox'], // For cloud environments like Render
+    });
+
+    console.log("Browser launched, navigating to WhatsApp Web...");
     const page = await browser.newPage();
-
-    // Open WhatsApp Web
-    await page.goto("https://web.whatsapp.com");
-
-    // Wait for the page to load and user to scan the QR code
-    await page.waitForSelector('._3FRCZ', { timeout: 0 });  // This ensures the QR code is scanned
-
-    // Navigate directly to the chat page
     await page.goto(`https://web.whatsapp.com/send?phone=${number}`);
 
-    // Wait for the message input box to be visible
-    const msgInputSelector = 'div._2A8P4'; // This selector might need to be updated
-    await page.waitForSelector(msgInputSelector, { timeout: 60000 });
+    let inputBox;
+    let retryCount = 0;
 
-    // Loop through the messages and send them
-    for (let i = 0; i < count; i++) {
-      for (const msg of messages) {
-        await page.type(msgInputSelector, msg);
-        await page.keyboard.press("Enter");
-        await new Promise((resolve) => setTimeout(resolve, 1000)); // Delay between messages
+    // Retry logic to find the input box
+    while (retryCount < 3) {
+      try {
+        console.log("Waiting for the message input box...");
+        inputBox = await page.waitForSelector('div._2A8P4', { visible: true, timeout: 20000 });
+        console.log("Message input box found!");
+        break;  // Exit loop if the element is found
+      } catch (err) {
+        console.log(`Error waiting for selector, attempt ${retryCount + 1}: ${err.message}`);
+        retryCount++;
+        if (retryCount === 3) {
+          console.error("Unable to find the input box after multiple attempts");
+          await browser.close();
+          return res.status(500).json({ error: "Unable to find the message input box after multiple attempts" });
+        }
       }
     }
 
-    // Close the browser after sending the messages
+    // Loop through messages and send them
+    for (let i = 0; i < count; i++) {
+      for (const msg of messages) {
+        console.log("Typing message:", msg);
+        await page.type('div._2A8P4', msg); // Input the message
+        await page.keyboard.press('Enter'); // Press Enter to send
+        await new Promise(resolve => setTimeout(resolve, 1000)); // Add a delay between messages
+      }
+    }
+
     console.log("Messages sent successfully.");
     await browser.close();
-
-    // Respond with success
     res.json({
       status: "success",
-      message: "Message sent successfully without storing data!",
+      message: "Messages sent successfully"
     });
   } catch (err) {
-    console.error("Error sending message:", err);
-    res.status(500).json({ error: "Failed to send message" });
+    console.error("Error:", err);
+    res.status(500).json({ error: "Internal server error", details: err.message });
   }
 });
 
-// Start the server
+// Set up dynamic port for Render (or fallback to local port)
 app.listen(PORT, () => {
   console.log(`Server running at http://localhost:${PORT}`);
 });
