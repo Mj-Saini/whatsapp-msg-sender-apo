@@ -7,7 +7,7 @@ const app = express();
 
 // Use environment variables for Puppeteer executable path and port
 const PORT = process.env.PORT || 8000;
-const PUPPETEER_EXECUTABLE_PATH = process.env.PUPPETEER_EXECUTABLE_PATH || '/usr/bin/chromium';  // Default path for Render
+const PUPPETEER_EXECUTABLE_PATH = process.env.PUPPETEER_EXECUTABLE_PATH || '/usr/bin/google-chrome-stable';  // Default path for Render
 
 app.use(express.json());
 
@@ -36,7 +36,14 @@ app.post("/api/schedule-message", async (req, res) => {
     const browser = await puppeteer.launch({
       headless: false, // Set to false to open a visible browser window
       executablePath: PUPPETEER_EXECUTABLE_PATH,  // Use the path from the environment variable
-      args: ['--no-sandbox', '--disable-setuid-sandbox'], // For cloud environments like Render
+      args: [
+    '--no-sandbox',
+    '--disable-setuid-sandbox',
+    '--disable-dev-shm-usage',  // Reduces shared memory usage
+    '--disable-gpu',  // Disables GPU for rendering
+    '--single-process',  // Run Puppeteer in a single process
+    '--disable-software-rasterizer',  // Disable software rasterizer
+  ], // For cloud environments like Render
     });
 
     console.log("Browser launched, navigating to WhatsApp Web...");
